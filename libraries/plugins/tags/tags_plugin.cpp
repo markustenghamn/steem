@@ -39,6 +39,37 @@ tags_plugin_impl::tags_plugin_impl() :
 
 tags_plugin_impl::~tags_plugin_impl() {}
 
+struct pre_apply_operation_visitor
+{
+   pre_apply_operation_visitor( database& db ) : _db( db ) {};
+   typedef void result_type;
+
+   database& _db;
+
+   void operator()( const delete_comment_operation& op )const
+   {
+      const auto& comment = _db.find< comment_object, chain::by_permlink >( boost::make_tuple( op.author, op.permlink ) );
+
+      if( comment == nullptr )
+         return;
+
+      const auto& idx = _db.get_index< tag_index, by_author_comment >();
+      const auto& auth = _db.get_account( op.author );
+
+      auto itr = idx.lower_bound( boost::make_tuple( auth.id, comment->id ) );
+
+      while( itr != idx.end() && itr->author == auth.id && itr->comment == comment->id )
+      {
+         const auto& tobj = *itr;
+         ++itr;
+         _db.remove( tobj );
+      }
+   }
+
+   template<typename Op>
+   void operator()( Op&& )const{} /// ignore all other ops
+};
+
 struct operation_visitor
 {
    operation_visitor( database& db ):_db(db){};
@@ -426,24 +457,6 @@ struct operation_visitor
                          _db.get_comment(op.author, op.permlink),
                          op.weight );
                          */
-   }
-
-   void operator()( const delete_comment_operation& op )const
-   {
-      const auto& idx = _db.get_index<tag_index>().indices().get<by_author_comment>();
-
-      const auto& auth = _db.get_account(op.author);
-      auto itr = idx.lower_bound( boost::make_tuple( auth.id ) );
-      while( itr != idx.end() && itr->author == auth.id )
-      {
-         const auto& tobj = *itr;
-         const auto* obj = _db.find< comment_object >( itr->comment );
-         ++itr;
-         if( !obj )
-         {
-            _db.remove( tobj );
-         }
-      }
    }
 
    void operator()( const comment_reward_operation& op )const
